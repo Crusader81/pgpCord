@@ -595,6 +595,15 @@ async function requestKeys(channelId: string) {
     }
 }
 
+const autoRequestedKeys = new Set<string>();
+
+// Someone sent us an encrypted message but we don't have their key: ask for it (once per user per session).
+function autoRequestKeys(channelId: string, authorId: string | undefined, recipientIds: string[]) {
+    if (!running || !authorId || !recipientIds.includes(authorId) || theirKeys[authorId] || autoRequestedKeys.has(authorId)) return;
+    autoRequestedKeys.add(authorId);
+    void requestKeys(channelId);
+}
+
 async function decryptCiphertext(ciphertext: string) {
     const cached = plaintextCache.get(ciphertext);
     if (cached != null && !isArmoredMessage(cached)) return cached;
@@ -690,6 +699,7 @@ const interceptAction = (action: any) => {
         case "MESSAGE_CREATE":
         case "MESSAGE_UPDATE": {
             const { message } = action;
+            const hadCiphertext = typeof message?.content === "string" && PGP_MESSAGE_REGEX.test(message.content);
             decryptMessage(message);
             if (message?.pgpCordCiphertext && !settings.store.plaintextNotifications) {
                 const text = plaintextCache.get(message.pgpCordCiphertext);
@@ -702,6 +712,7 @@ const interceptAction = (action: any) => {
             const recipientIds = getRecipientIds(message?.channel_id);
             const key = recipientIds && findIncomingKey(message, recipientIds);
             if (key) void handleIncomingKey(message.channel_id, message.author.id, key, action.type === "MESSAGE_CREATE", message.content.includes(KEY_REQUEST_STRING));
+            else if (action.type === "MESSAGE_CREATE" && hadCiphertext && recipientIds) autoRequestKeys(message.channel_id, message.author?.id, recipientIds);
             break;
         }
         case "LOAD_MESSAGES_SUCCESS":
