@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-// Fork of Raudy6's PGPcord plugin.
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { ApplicationCommandInputType } from "@api/Commands";
 import { plugins } from "@api/PluginManager";
@@ -807,8 +806,8 @@ const SafeEncryptedBadge = ErrorBoundary.wrap(EncryptedBadge, { noop: true });
 const SafeEncryptionToggle = ErrorBoundary.wrap(EncryptionToggle, { noop: true });
 
 export default definePlugin({
-    name: "PGPcord Fork",
-    description: "Portable PGP text encryption with readable history, notification previews and selective group recipients.",
+    name: "PGPcord: Discord E2EE",
+    description: "A discord Encryption layer that automatically encrypts messages between other users with the plugin installed.",
     authors: [{ name: "Raudy6", id: 680537383543898175n }, { name: "ITRF", id: 240274815842385922n}],
     settings,
 
@@ -850,11 +849,7 @@ export default definePlugin({
     async start() {
         const generation = ++lifecycle;
         const original = Settings.plugins["PGPcord: Discord E2EE"];
-        // Settings outlive uninstalled plugins, so only block if the original is actually installed
-        if (plugins["PGPcord: Discord E2EE"] && original?.enabled) {
-            showToast({ text: "Disable the original PGPcord plugin, then restart with only PGPcord Fork enabled.", variant: "critical" });
-            return;
-        }
+
         if (!settings.store.publicKey && !settings.store.privateKey && original) {
             settings.store.publicKey = original.publicKey;
             settings.store.privateKey = original.privateKey;
