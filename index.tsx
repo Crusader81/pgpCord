@@ -353,6 +353,7 @@ async function getPrivateKey() {
     const privateKey: string = settings.store.privateKey ?? "", passphrase: string = settings.store.passphrase ?? "";
     if (!privateKey.trim()) throw new Error("No private key set in PGPcord settings");
 
+    // reuse the unlocked key until the key or passphrase changes
     const source = privateKey + "\0" + passphrase;
     if (privateKeyCache?.source === source) return privateKeyCache.key;
 
@@ -616,6 +617,7 @@ async function decryptLater(channelId: string, messageId: string, ciphertext: st
         const plaintext = await decryptCiphertext(ciphertext);
         if (!running || generation !== lifecycle) return;
         const current = MessageStore.getMessage(channelId, messageId);
+        // only replace it if nobody edited the message while we were decrypting
         if (current?.content?.match(PGP_MESSAGE_REGEX)?.[0] === ciphertext) {
             setEncrypted(messageId, true);
             updateMessage(channelId, messageId, { content: plaintext, pgpCordEncrypted: true });

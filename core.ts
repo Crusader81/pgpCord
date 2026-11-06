@@ -6,6 +6,7 @@
 
 export function selectRecipients(ids: string[], keys: Record<string, string>, group: boolean, mode: string): string[] {
     if (!group) return ids;
+    // in groups, only include people whose keys we have
     return mode === "self" ? [] : ids.filter(id => !!keys[id]);
 }
 
@@ -15,6 +16,7 @@ export function isArmoredMessage(text: string): boolean {
 
 export async function decryptArmoredContent(ciphertext: string, decrypt: (armored: string) => Promise<string>) {
     let text = ciphertext;
+    // unwrap messages that got encrypted more than once
     for (let layer = 0; layer < 3; layer++) {
         text = await decrypt(text.trim());
         if (!isArmoredMessage(text)) return text;
@@ -51,6 +53,7 @@ export function createDispatchGate(dispatcher: Dispatcher, preparation: Preparat
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
             if (!preparation.applies(message)) return message;
+            // let discord carry on if decryption takes too long
             return await Promise.race([
                 preparation.prepare(message, live),
                 new Promise(resolve => { timer = setTimeout(() => resolve(message), timeout); })
@@ -102,6 +105,7 @@ export function createDispatchGate(dispatcher: Dispatcher, preparation: Preparat
             return original.call(this, action);
         }
         if (!channel || !lifecycle || (!searchResults && !encrypted && !queues.has(channel))) return original.call(this, action);
+        // keep edits and deletes behind any decryption already running here
         const previous = queues.get(channel) ?? Promise.resolve();
         const task = previous.catch(() => {}).then(async () => {
             let next = action;
@@ -125,7 +129,7 @@ export function createDispatchGate(dispatcher: Dispatcher, preparation: Preparat
     };
 }
 
-
+// should decrypt replies without needing to go into history
 export function decryptReplyPreviews(store: any, decrypt: (ciphertext: string) => Promise<string>, applies: (channelId: string) => boolean) {
     const armor = /-----BEGIN PGP MESSAGE-----[\s\S]+?-----END PGP MESSAGE-----/;
     const plaintext = new Map<string, string>();
@@ -148,8 +152,10 @@ export function decryptReplyPreviews(store: any, decrypt: (ciphertext: string) =
                 record = { text, message: typeof message.merge === "function" ? message.merge(fields) : { ...message, ...fields } };
                 records.set(message, record);
             }
+            // give the preview a decrypted copy, leave the stored message alone
             return { ...entry, message: record.message };
         }
+        // avoid starting the same job again on every render
         if (!pending.has(ciphertext) && !failed.has(ciphertext)) {
             pending.add(ciphertext);
             const started = generation;
@@ -157,6 +163,7 @@ export function decryptReplyPreviews(store: any, decrypt: (ciphertext: string) =
                 if (!active || generation !== started || typeof text !== "string") return;
                 if (plaintext.size >= 500) plaintext.delete(plaintext.keys().next().value!);
                 plaintext.set(ciphertext, text);
+                // tell the reply preview to render again with the plaintext
                 store.emitChange();
             }).catch(() => {
                 if (active && generation === started) {
