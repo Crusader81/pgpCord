@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { stripTypeScriptTypes } from "node:module";
 import * as openpgp from "openpgp";
-import { createDispatchGate, decryptArmoredContent, selectRecipients } from "./core.ts";
+import { createDispatchGate, decryptArmoredContent, decryptReplyPreviews, selectRecipients } from "./core.ts";
 
 const armor = "-----BEGIN PGP MESSAGE-----\nciphertext\n-----END PGP MESSAGE-----";
 const action = (type, content = armor) => ({ type, message: { id: "message", channel_id: "group", content } });
@@ -310,4 +310,71 @@ test("plaintext replies to encrypted messages still pass through preparation", a
     assert.equal(delivered[0].message.referenced_message.content, "quoted plaintext");
     assert.equal(delivered[0].message.content, "plain reply");
     stop();
+});
+
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test("reply previews decrypt without loading history or changing stored ciphertext", async () => {
+    const message = { content: armor };
+    const entry = { state: 0, message };
+    let calls = 0, updates = 0;
+    const store = { getMessage: () => entry, getMessageByReference: () => entry, emitChange: () => updates++ };
+    const original = store.getMessage;
+    const preview = decryptReplyPreviews(store, async () => { calls++; return "quoted plaintext"; }, id => id === "group");
+    assert.equal(store.getMessage("group"), entry);
+    store.getMessageByReference({ channel_id: "group" });
+    await settle();
+    const decrypted = store.getMessage("group");
+    assert.equal(decrypted.message.content, "quoted plaintext");
+    assert.equal(decrypted.message.pgpCordEncrypted, true);
+    assert.equal(store.getMessageByReference({ channel_id: "group" }).message, decrypted.message);
+    assert.equal(message.content, armor);
+    assert.equal(calls, 1);
+    assert.equal(updates, 1);
+    preview.stop();
+    assert.equal(store.getMessage, original);
+});
+
+test("reply previews retry missing keys and preserve Discord message models", async () => {
+    let ready = false, calls = 0;
+    const message = { content: armor, merge: fields => ({ ...fields, model: true }) };
+    const store = { getMessage: () => ({ state: 0, message }), emitChange() {} };
+    const preview = decryptReplyPreviews(store, async () => {
+        calls++;
+        if (!ready) throw new Error("Missing key");
+        return "decrypted";
+    }, id => id === "group");
+    store.getMessage("elsewhere");
+    assert.equal(calls, 0);
+    store.getMessage("group");
+    await settle();
+    store.getMessage("group");
+    await settle();
+    assert.equal(calls, 1);
+    ready = true;
+    preview.retry();
+    store.getMessage("group");
+    await settle();
+    assert.equal(store.getMessage("group").message.model, true);
+    assert.equal(calls, 2);
+    preview.stop();
+});
+
+test("stopping reply decryption ignores late results and handles unloaded replies", async () => {
+    const waiting = deferred();
+    let entry, updates = 0;
+    const store = { getMessage: () => entry, emitChange: () => updates++ };
+    const preview = decryptReplyPreviews(store, () => waiting.promise, () => true);
+    assert.equal(store.getMessage("group"), undefined);
+    entry = { state: 1 };
+    assert.equal(store.getMessage("group"), entry);
+    entry = { state: 0, message: { content: armor } };
+    store.getMessage("group");
+    await Promise.resolve();
+    preview.stop();
+    waiting.resolve("plaintext");
+    await settle();
+    assert.equal(updates, 0);
+    assert.equal(store.getMessage("group"), entry);
 });

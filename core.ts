@@ -124,3 +124,68 @@ export function createDispatchGate(dispatcher: Dispatcher, preparation: Preparat
         if (dispatcher.dispatch === dispatch) dispatcher.dispatch = original;
     };
 }
+
+
+export function decryptReplyPreviews(store: any, decrypt: (ciphertext: string) => Promise<string>, applies: (channelId: string) => boolean) {
+    const armor = /-----BEGIN PGP MESSAGE-----[\s\S]+?-----END PGP MESSAGE-----/;
+    const plaintext = new Map<string, string>();
+    const pending = new Set<string>();
+    const failed = new Set<string>();
+    let records = new WeakMap<object, { text: string; message: any; }>();
+    let active = true, generation = 0;
+    const restore: (() => void)[] = [];
+
+    function read(entry: any, fallbackChannel?: string) {
+        const message = entry?.message;
+        const channelId = message?.channel_id ?? fallbackChannel;
+        const ciphertext = typeof message?.content === "string" ? message.content.match(armor)?.[0] : null;
+        if (!active || !ciphertext || !channelId || !applies(channelId)) return entry;
+        const text = plaintext.get(ciphertext);
+        if (text != null) {
+            let record = records.get(message);
+            if (!record || record.text !== text) {
+                const fields = { content: text, pgpCordEncrypted: true };
+                record = { text, message: typeof message.merge === "function" ? message.merge(fields) : { ...message, ...fields } };
+                records.set(message, record);
+            }
+            return { ...entry, message: record.message };
+        }
+        if (!pending.has(ciphertext) && !failed.has(ciphertext)) {
+            pending.add(ciphertext);
+            const started = generation;
+            void Promise.resolve().then(() => decrypt(ciphertext)).then(text => {
+                if (!active || generation !== started || typeof text !== "string") return;
+                if (plaintext.size >= 500) plaintext.delete(plaintext.keys().next().value!);
+                plaintext.set(ciphertext, text);
+                store.emitChange();
+            }).catch(() => {
+                if (active && generation === started) {
+                    if (failed.size >= 500) failed.delete(failed.values().next().value!);
+                    failed.add(ciphertext);
+                }
+            }).finally(() => { if (generation === started) pending.delete(ciphertext); });
+        }
+        return entry;
+    }
+    for (const method of ["getMessage", "getMessageByReference"]) {
+        const original = store?.[method];
+        if (typeof original !== "function") continue;
+        const wrapped = function (this: any, ...args: any[]) {
+            const entry = original.apply(this, args);
+            try {
+                const channelId = method === "getMessage" ? args[0] : args[0]?.channel_id ?? args[0]?.channelId;
+                return read(entry, channelId);
+            } catch { return entry; }
+        };
+        store[method] = wrapped;
+        restore.push(() => { if (store[method] === wrapped) store[method] = original; });
+    }
+    return {
+        retry() { generation++; failed.clear(); pending.clear(); store?.emitChange?.(); },
+        stop() {
+            active = false; generation++;
+            restore.reverse().forEach(unpatch => unpatch());
+            plaintext.clear(); pending.clear(); failed.clear(); records = new WeakMap();
+        }
+    };
+}

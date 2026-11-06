@@ -6,7 +6,6 @@
 
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { ApplicationCommandInputType } from "@api/Commands";
-import { plugins } from "@api/PluginManager";
 import * as DataStore from "@api/DataStore";
 import { MessageEditListener, MessageSendListener } from "@api/MessageEvents";
 import { updateMessage } from "@api/MessageUpdater";
@@ -16,10 +15,11 @@ import { Button, Paragraph } from "@components/index";
 import { fetchUserProfile, sendMessage } from "@utils/discord";
 import { useAwaiter, useForceUpdater } from "@utils/react";
 import definePlugin, { IconComponent, OptionType } from "@utils/types";
+import { filters, waitFor } from "@webpack";
 import { Alerts, ChannelStore, FluxDispatcher, MessageStore, SelectedChannelStore, showToast, TextArea, useEffect, UserStore, useState } from "@webpack/common";
 import * as openpgp from "openpgp";
 
-import { createDispatchGate, decryptArmoredContent, isArmoredMessage, selectRecipients } from "./core";
+import { createDispatchGate, decryptArmoredContent, decryptReplyPreviews, isArmoredMessage, selectRecipients } from "./core";
 
 // If someone has this in their bio, we assume they run this plugin too.
 const MAGIC_BIO_STRING = "I use PGPcord BTW";
@@ -58,7 +58,8 @@ const settings = definePluginSettings({
     passphrase: {
         type: OptionType.STRING,
         description: "Passphrase for your private key (leave empty if it has none)",
-        default: ""
+        default: "",
+        onChange: () => replyPreviews?.retry()
     },
     encryptionEnabled: {
         type: OptionType.BOOLEAN,
@@ -103,7 +104,7 @@ function KeyTextSetting({ id, title, description }: { id: "publicKey" | "private
             <Paragraph>{description}</Paragraph>
             <TextArea
                 value={value}
-                onChange={(v: string) => settings.store[id] = v}
+                onChange={(v: string) => { settings.store[id] = v; replyPreviews?.retry(); }}
                 placeholder="-----BEGIN PGP ..."
                 rows={6}
             />
@@ -218,6 +219,7 @@ let groupModes: Record<string, "known" | "self"> = {};
 let running = false;
 let lifecycle = 0;
 let stopDispatchGate: (() => void) | undefined;
+let replyPreviews: ReturnType<typeof decryptReplyPreviews> | undefined;
 const badgeSubscriptions = new Set<() => void>();
 
 function cachePlaintext(ciphertext: string, plaintext: string) {
@@ -865,6 +867,10 @@ export default definePlugin({
         // Pending plaintext from the old plugin is never automatically resent.
         pendingMessages = {};
         running = true;
+        waitFor(filters.byStoreName("ReferencedMessageStore"), store => {
+            if (running && generation === lifecycle)
+                replyPreviews = decryptReplyPreviews(store, decryptCiphertext, channelId => !!getRecipientIds(channelId));
+        });
         stopDispatchGate = createDispatchGate(FluxDispatcher, {
             applies: message => !!getRecipientIds(message?.channel_id),
             async prepare(message, live) {
@@ -906,6 +912,8 @@ export default definePlugin({
     stop() {
         running = false;
         lifecycle++;
+        replyPreviews?.stop();
+        replyPreviews = undefined;
         stopDispatchGate?.();
         stopDispatchGate = undefined;
         checkedOwnBio = false;
