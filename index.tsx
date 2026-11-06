@@ -19,7 +19,7 @@ import { filters, waitFor } from "@webpack";
 import { Alerts, ChannelStore, FluxDispatcher, MessageStore, SelectedChannelStore, showToast, TextArea, useEffect, UserStore, useState } from "@webpack/common";
 import * as openpgp from "openpgp";
 
-import { createDispatchGate, decryptArmoredContent, decryptReplyPreviews, isArmoredMessage, selectRecipients } from "./core";
+import { createDispatchGate, decryptArmoredContent, decryptReplyPreviews, extractWhitelistedLinks, isArmoredMessage, parseLinkWhitelist, selectRecipients } from "./core";
 
 // If someone has this in their bio, we assume they run this plugin too.
 const MAGIC_BIO_STRING = "I use PGPcord BTW";
@@ -83,6 +83,11 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Without a saved DM recipient key, encrypt only to yourself instead of waiting. The other person cannot read it yet.",
         default: true
+    },
+    whitelistedLinks: {
+        type: OptionType.STRING,
+        description: "Whitelisted links: domains (comma separated) whose links are also sent unencrypted next to the encrypted message, so Discord can embed them. Anyone in the chat, and Discord, can see these links. Wrap a link in <> to keep it encrypted only.",
+        default: "youtube.com, youtu.be, klipy.com, giphy.com, tenor.com"
     },
     plaintextNotifications: {
         type: OptionType.BOOLEAN,
@@ -381,14 +386,17 @@ const maxMessageLength = () => (UserStore.getCurrentUser() as any)?.premiumType 
 async function encryptInPlace(userIds: string[], msg: { content: string; }) {
     const plaintext = msg.content;
     const ciphertext = await encryptFor(userIds, plaintext);
+    // The full text stays in the ciphertext; decrypting shows only that, so these copies don't appear twice
+    const links = extractWhitelistedLinks(plaintext, parseLinkWhitelist(settings.store.whitelistedLinks ?? ""));
+    const content = [ciphertext, ...links].join("\n");
 
-    if (ciphertext.length > maxMessageLength()) {
-        showToast({ text: `Encrypted message is too long (${ciphertext.length} characters). Try a shorter message.`, variant: "critical" });
+    if (content.length > maxMessageLength()) {
+        showToast({ text: `Encrypted message is too long (${content.length} characters). Try a shorter message.`, variant: "critical" });
         return false;
     }
 
     cachePlaintext(ciphertext, plaintext);
-    msg.content = ciphertext;
+    msg.content = content;
     return true;
 }
 

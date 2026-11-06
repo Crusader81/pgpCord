@@ -378,3 +378,16 @@ test("stopping reply decryption ignores late results and handles unloaded replie
     assert.equal(updates, 0);
     assert.equal(store.getMessage("group"), entry);
 });
+
+test("whitelisted links are picked out to be sent alongside the ciphertext", async () => {
+    const { parseLinkWhitelist, extractWhitelistedLinks } = await import("./core.ts");
+    const domains = parseLinkWhitelist("youtube.com, https://klipy.com/, *.youtu.be\n");
+    assert.deepEqual(domains, ["youtube.com", "klipy.com", "youtu.be"]);
+    assert.deepEqual(
+        extractWhitelistedLinks("watch https://www.youtube.com/watch?v=abc. and https://evil.example/x https://klipy.com/gifs/cat", domains),
+        ["https://www.youtube.com/watch?v=abc", "https://klipy.com/gifs/cat"]
+    );
+    assert.deepEqual(extractWhitelistedLinks("<https://youtube.com/a> ||https://youtu.be/b|| https://notyoutube.com/c https://youtube.com.evil.example/d", domains), ["||https://youtu.be/b||"]);
+    assert.deepEqual(extractWhitelistedLinks("https://youtube.com/a https://youtube.com/a", domains), ["https://youtube.com/a"]);
+    assert.deepEqual(extractWhitelistedLinks("https://youtube.com/a", []), []);
+});

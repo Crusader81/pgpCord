@@ -196,3 +196,26 @@ export function decryptReplyPreviews(store: any, decrypt: (ciphertext: string) =
         }
     };
 }
+
+export function parseLinkWhitelist(setting: string): string[] {
+    return setting.split(/[\s,]+/)
+        .map(entry => entry.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^\*?\./, ""))
+        .filter(Boolean);
+}
+
+// Links to whitelisted sites, which get sent in plaintext next to the ciphertext so Discord can embed them
+export function extractWhitelistedLinks(text: string, domains: string[]): string[] {
+    if (!domains.length) return [];
+    const links: string[] = [];
+    // <url> suppresses the embed, so leave those encrypted only
+    for (const match of text.matchAll(/(<)?(\|\|)?(https?:\/\/[^\s<>|]+)/g)) {
+        if (match[1]) continue;
+        const url = match[3].replace(/[)\].,!?'"]+$/, "");
+        let host: string;
+        try { host = new URL(url).hostname.toLowerCase(); } catch { continue; }
+        if (!domains.some(domain => host === domain || host.endsWith("." + domain))) continue;
+        const link = match[2] ? `||${url}||` : url; // keep spoilered links spoilered
+        if (!links.includes(link)) links.push(link);
+    }
+    return links;
+}
