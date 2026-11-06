@@ -808,7 +808,7 @@ const SafeEncryptionToggle = ErrorBoundary.wrap(EncryptionToggle, { noop: true }
 export default definePlugin({
     name: "PGPcord: Discord E2EE",
     description: "A discord Encryption layer that automatically encrypts messages between other users with the plugin installed.",
-    authors: [{ name: "Raudy6", id: 680537383543898175n }, { name: "ITRF", id: 240274815842385922n}],
+    authors: [{ name: "Raudy6", id: 680537383543898175n }, { name: "1TRF", id: 240274815842385922n}],
     settings,
 
     onBeforeMessageSend,
